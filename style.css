@@ -1,3 +1,13 @@
+@font-face {
+  font-family: 'FatsansContur';
+  src: url('/assets/Fonts/FatsansContur.ttf');
+}
+
+@font-face {
+  font-family: 'FatsansShadow';
+  src: url('/assets/Fonts/FatsansShadow.ttf');
+}
+
 :root {
   font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
   --dkClr:#181818;
@@ -36,7 +46,7 @@ main{
 }
 
 #gameCanvas {
-  border: 1px solid red;
+  border: 1px solid var(--dkClr);
   position: absolute;
   top: 50%;
   left: 50%;
