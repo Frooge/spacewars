@@ -10,8 +10,16 @@ const sizes = {
 class GameScene extends Phaser.Scene{
   constructor(){
     super("scene-game")
+    this.variables()
+  }
+
+  variables() {
     this.start = false
+    this.isGameOver = false
+    this.doneGameOverScreen = false
     this.startButton
+    this.gameOverText
+    this.restartText
     this.introText
     this.tutorialText
     this.countDownText
@@ -19,6 +27,7 @@ class GameScene extends Phaser.Scene{
     this.countDownStart = 0
     this.scrollSpeed = .25
     this.scoreText
+    this.finalScoreText
     this.score = 0
     this.scoreLastIncrement = 0
     this.scoreBuffer = 100
@@ -66,17 +75,26 @@ class GameScene extends Phaser.Scene{
 
     this.bg = this.add.tileSprite(0,0,sizes.width,sizes.height,"bg").setOrigin(0,0)
 
+    // Create all UI text
     this.spawnIntroText();
     this.spawnTutorialText();
     this.spawnCountDownText();
     this.spawnScoreText();
+    this.spawnGameOverText();
+    this.spawnFinalScoreText();
+    this.spawnRestartText();
     
-
     // Create a Matter.js collision category for world bounds
     this.spawnPlayer();
 
     this.playerLasers = this.add.group();
     this.meteors = this.add.group();
+
+    // Create Game Over Fade to black screen
+    this.blackFade = this.add.rectangle(0,0,sizes.width,sizes.height,"0").setOrigin(0,0)
+    this.blackFade.setAlpha(0)
+    // Set depth so at the top
+    this.blackFade.setDepth(1)
 
     // Create world bounds
     const { width, height } = sizes
@@ -84,48 +102,51 @@ class GameScene extends Phaser.Scene{
     this.matter.world.setBounds(0, 0, width, height, thickness, true, true, true, true)
 
     this.matter.world.on('collisionstart', (event) => {
-      event.pairs.forEach(pair => {
-        const bodyA = pair.bodyA;
-        const bodyB = pair.bodyB;
-
-      // Check if collision involves player and enemy
-        if ((bodyA.collisionFilter.category === this.playerCollisionCategory && bodyB.collisionFilter.category === this.enemyCollisionCategory) ||
-          (bodyA.collisionFilter.category === this.enemyCollisionCategory && bodyB.collisionFilter.category === this.playerCollisionCategory)) {
-        
-          const player = bodyA.collisionFilter.category === this.playerCollisionCategory ? bodyA : bodyB;
-          const enemy = bodyA.collisionFilter.category === this.enemyCollisionCategory ? bodyA : bodyB;
+      if(!this.isGameOver) {
+        event.pairs.forEach(pair => {
+          const bodyA = pair.bodyA;
+          const bodyB = pair.bodyB;
+  
+        // Check if collision involves player and enemy
+          if ((bodyA.collisionFilter.category === this.playerCollisionCategory && bodyB.collisionFilter.category === this.enemyCollisionCategory) ||
+            (bodyA.collisionFilter.category === this.enemyCollisionCategory && bodyB.collisionFilter.category === this.playerCollisionCategory)) {
           
-          
-          const time = this.time.now // get current time
-
-          if (time > this.playerLastHit + this.playerIFrames) {
-            this.reducePlayerHP()
-            this.playerLastHit = time
+            const player = bodyA.collisionFilter.category === this.playerCollisionCategory ? bodyA : bodyB;
+            const enemy = bodyA.collisionFilter.category === this.enemyCollisionCategory ? bodyA : bodyB;
+            
+            const time = this.time.now // get current time
+  
+            if (time > this.playerLastHit + this.playerIFrames) {
+              this.reducePlayerHP(enemy.gameObject)
+              this.playerLastHit = time
+            }
+  
           }
-
+          
+          // Check if collision involves playerLaser and enemy
+          if ((bodyA.collisionFilter.category === this.playerLaserCollisionCategory && bodyB.collisionFilter.category === this.enemyCollisionCategory) ||
+            (bodyA.collisionFilter.category === this.enemyCollisionCategory && bodyB.collisionFilter.category === this.playerLaserCollisionCategory)) {
+          
+            const laser = bodyA.collisionFilter.category === this.playerLaserCollisionCategory ? bodyA : bodyB;
+            const enemy = bodyA.collisionFilter.category === this.enemyCollisionCategory ? bodyA : bodyB;
+  
+            this.damageEntity(enemy.gameObject, laser.gameObject);
+            let laserParticle = laser.gameObject.laserParticle
+            laserParticle.visible = true
+            this.time.addEvent({
+                delay: 100, // Delay in milliseconds (1000 ms = 1 second)
+                callback: function() {laserParticle.destroy()},
+                callbackScope: this,
+                loop: laserParticle
+            });
+            laser.gameObject.destroy()
         }
-        
-        // Check if collision involves playerLaser and enemy
-        if ((bodyA.collisionFilter.category === this.playerLaserCollisionCategory && bodyB.collisionFilter.category === this.enemyCollisionCategory) ||
-          (bodyA.collisionFilter.category === this.enemyCollisionCategory && bodyB.collisionFilter.category === this.playerLaserCollisionCategory)) {
-        
-          const laser = bodyA.collisionFilter.category === this.playerLaserCollisionCategory ? bodyA : bodyB;
-          const enemy = bodyA.collisionFilter.category === this.enemyCollisionCategory ? bodyA : bodyB;
-
-          this.damageEntity(enemy.gameObject, laser.gameObject);
-          let laserParticle = laser.gameObject.laserParticle
-          laserParticle.visible = true
-          this.time.addEvent({
-              delay: 100, // Delay in milliseconds (1000 ms = 1 second)
-              callback: function() {laserParticle.destroy()},
-              callbackScope: this,
-              loop: laserParticle
-          });
-          laser.gameObject.destroy()
+        });
       }
-      });
+      
     });
 
+    // Assign font to text UI
     WebFont.load({
       google: {
         families: ["Press Start 2P"]
@@ -135,8 +156,13 @@ class GameScene extends Phaser.Scene{
         this.tutorialText.setFontFamily('"Press Start 2P"')
         this.countDownText.setFontFamily('"Press Start 2P"')
         this.scoreText.setFontFamily('"Press Start 2P"')
+        this.gameOverText.setFontFamily('"Press Start 2P"')
+        this.finalScoreText.setFontFamily('"Press Start 2P"')
+        this.restartText.setFontFamily('"Press Start 2P"')
       }
     })
+
+    
   }
 
   update (time, delta)
@@ -167,71 +193,102 @@ class GameScene extends Phaser.Scene{
 
     const {left, right, up, down} = this.cursors
     const { W, A, S, D, SPACE } = this.keys
-    const speed = this.playerSpeed * (delta / 1000);
 
-    const cam = this.cameras.main
+    if(this.isGameOver) {
+      this.tweens.add({
+        targets: this.blackFade,
+        alpha: 1,
+        duration: 1000,
+        onComplete: () => {
+          this.tweens.add({
+            targets: this.gameOverText,
+            alpha: 1,
+            duration: 1000,
+            onComplete: () => {
+              this.finalScoreText.setText(this.score.toString().padStart(6,'0'))
+              this.finalScoreText.visible = true
+              this.restartText.visible = true
+              this.doneGameOverScreen = true
+            }
+          })
+        }
+      })
+      if(SPACE.isDown && this.doneGameOverScreen) {
+        // reset all variables
+        this.variables()
 
-    if(right.isDown)
-    {
-      cam.scrollX+=10
-    } else if(left.isDown) {
-      cam.scrollX-=10
-    }
-
-    if (left.isDown || A.isDown)
-    {
-      this.player.setVelocityX(-speed) 
-    } 
-    else if (right.isDown || D.isDown)
-    {
-      this.player.setVelocityX(speed)
+        // restart entire scene
+        this.scene.restart()
+      }
     } else {
-      this.player.setVelocityX(0)
-    }
+      
+      const speed = this.playerSpeed * (delta / 1000);
 
-    if (up.isDown || W.isDown)
-    {
-      this.player.setVelocityY(-speed)
-    } 
-    else if (down.isDown || S.isDown)
-    {
-      this.player.setVelocityY(speed)
-    } else {
-      this.player.setVelocityY(0)
-    }
+      const cam = this.cameras.main
 
-    if (SPACE.isDown) {
-      this.fireLaser(time);
-    }
+      if(right.isDown)
+      {
+        cam.scrollX+=10
+      } else if(left.isDown) {
+        cam.scrollX-=10
+      }
 
-    if (this.start) {
-      this.gameStart(time)
-    } else if(this.countDownText && (SPACE.isDown && this.countDownText.visible == false)) {
-      this.introText.destroy()
-      this.tutorialText.destroy()
-      this.countDownText.visible = true
-      this.countDown = this.time.delayedCall()
-      this.time.addEvent({
-          delay: 1000, // Delay in milliseconds (1000 ms = 1 second)
-          callback: this.countDownNow,
-          callbackScope: this,
-          loop: this.countDownText
-      });
-    }
-
-    if(this.countDownText && (this.countDownText.visible && this.countDownTime >= -1)) {
-      if(this.countDownTime == 0) {
-        this.countDownText.x = sizes.width/2 - 50
-        this.countDownText.setText('GO!')
-      } else if(this.countDownTime == -1) {
-        this.countDownText.destroy()
-        this.createPlayerHP();
-        this.scoreText.visible = true
-        this.start = true
+      if (left.isDown || A.isDown)
+      {
+        this.player.setVelocityX(-speed) 
+      } 
+      else if (right.isDown || D.isDown)
+      {
+        this.player.setVelocityX(speed)
       } else {
-        this.countDownText.setText(`${this.countDownTime}`)
+        this.player.setVelocityX(0)
+      }
+
+      if (up.isDown || W.isDown)
+      {
+        this.player.setVelocityY(-speed)
+      } 
+      else if (down.isDown || S.isDown)
+      {
+        this.player.setVelocityY(speed)
+      } else {
+        this.player.setVelocityY(0)
+      }
+
+      if (SPACE.isDown) {
+        this.fireLaser(time);
+      }
+
+      if (this.start) {
+        this.gameStart(time)
+      } else if(this.countDownText && (SPACE.isDown && this.countDownText.visible == false)) {
+        this.introText.destroy()
+        this.tutorialText.destroy()
+        this.countDownText.visible = true
+        this.countDown = this.time.delayedCall()
+        this.time.addEvent({
+            delay: 1000, // Delay in milliseconds (1000 ms = 1 second)
+            callback: this.countDownNow,
+            callbackScope: this,
+            loop: this.countDownText
+        });
+      }
+
+      if(this.countDownText && (this.countDownText.visible && this.countDownTime >= -1)) {
+        if(this.countDownTime == 0) {
+          this.countDownText.x = sizes.width/2 - 50
+          this.countDownText.setText('GO!')
+        } else if(this.countDownTime == -1) {
+          this.countDownText.destroy()
+          this.createPlayerHP();
+          this.scoreText.visible = true
+          this.start = true
+        } else {
+          this.countDownText.setText(`${this.countDownTime}`)
+        }
       }
     }
+
   }
 
   gameStart(time) {
@@ -290,6 +347,34 @@ class GameScene extends Phaser.Scene{
     this.countDownText = countDownText
   }
 
+  spawnGameOverText() {
+    const gameOverText = this.add.text(sizes.width/2 - 250, sizes.height/2 - 50, "YOU DIED", {
+      font: "64px",
+      color: "#FF0000"
+    })
+    gameOverText.alpha = 0
+    gameOverText.setDepth(2)
+    this.gameOverText = gameOverText
+  }
+
+  spawnFinalScoreText() {
+    const finalScoreText = this.add.text(sizes.width/2 - 75, sizes.height/2 + 30, "000000", {
+      font: "25px"
+    })
+    finalScoreText.visible = false
+    finalScoreText.setDepth(2)
+    this.finalScoreText = finalScoreText
+  }
+
+  spawnRestartText() {
+    const restartText = this.add.text(sizes.width/2 - 250, sizes.height/2 + 150, "Press SPACE to restart", {
+      font: "25px"
+    })
+    restartText.visible = false
+    restartText.setDepth(2)
+    this.restartText = restartText
+  }
+
   isOutsideWorldBoundsLeft(object) {
     const { width, height } = sizes;
     const boundsX = width; // Half of the game width
@@ -338,10 +423,16 @@ class GameScene extends Phaser.Scene{
     this.playerHPIcons = playerHPIcons
   }
 
-  reducePlayerHP() {
-    if(this.playerHPIcons === undefined || this.playerHPIcons.length === 0) {
+  reducePlayerHP(enemy) {
+    console.log(enemy)
+
+    this.playerHP -= enemy.dmg
+
+
+    if(this.playerHP === 0 || this.playerHPIcons === undefined || this.playerHPIcons.length === 0 ) {
       this.gameOver()
     }
+    
 
     let lastIndex = this.playerHPIcons.length - 1
 
@@ -385,7 +476,6 @@ class GameScene extends Phaser.Scene{
     const speed = Phaser.Math.Between(3, 5) * level;
     const angle = Phaser.Math.Between(0, 360);
     const spawnY = Phaser.Math.Between(0, sizes.height); // Ensure spawnY is within game height
-    //const spawnY = 250
 
     const meteor = this.matter.add.image(sizes.width+50 , spawnY, spawnMeteor)
     meteor.angle = angle
@@ -397,6 +487,7 @@ class GameScene extends Phaser.Scene{
 
     meteor.hp = 3
     meteor.points = 64
+    meteor.dmg = 1
 
     this.meteors.add(meteor)
   }
@@ -409,21 +500,13 @@ class GameScene extends Phaser.Scene{
     }
   }
 
-  damagePlayer() {
-    this.playerHP -= 1
-
-    if(this.playerHP <= 0) {
-      this.gameOver()
-    }
-  }
-
   destroyEntity(entity) {
     this.score += entity.points
     entity.destroy()
   }
 
   gameOver() {
-    console.log('YOU DIEEDD!!!!!')
+    this.isGameOver = true
   }
 }
 
